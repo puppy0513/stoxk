@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>stoxk dividend dashboard</title>
+    <link rel="stylesheet" href="./styles.css?v=2" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="title-block">
+          <p class="eyebrow">Dividend dashboard</p>
+          <h1>배당과 분배금이 보이는 표</h1>
+          <p class="lede">
+            수량은 브라우저에 저장되고, 자산 데이터는 JSON 또는 공개 스프레드시트 CSV에서 읽습니다.
+          </p>
+        </div>
+        <div class="controls">
+          <label class="field">
+            <span>데이터 소스</span>
+            <input id="sourceInput" type="text" spellcheck="false" />
+          </label>
+          <button id="saveButton" type="button">저장</button>
+          <button id="reloadButton" type="button">새로고침</button>
+          <button id="resetButton" type="button">수량 초기화</button>
+          <button id="logoutButton" type="button">로그아웃</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="overview" aria-label="포트폴리오 요약">
+          <div class="overview-card overview-total">
+            <span class="overview-label">현재 투자중인 배당자산 총합</span>
+            <strong id="portfolioTotalValue">-</strong>
+            <span id="portfolioTotalMeta" class="overview-meta">USD/KRW 환율을 불러오는 중입니다.</span>
+          </div>
+          <div class="overview-card overview-dividend">
+            <span class="overview-label">이번달 예상 배당금</span>
+            <strong id="monthlyDividendValue">-</strong>
+            <span id="monthlyDividendMeta" class="overview-meta">배당주기별 월간 추정치 합계</span>
+          </div>
+        </section>
+
+        <section class="summary" id="summary"></section>
+
+        <section class="table-wrap" aria-label="배당 대시보드 표">
+          <table>
+            <thead>
+              <tr>
+                <th>주식/ETF 이름</th>
+                <th>티커</th>
+                <th>배당주기</th>
+                <th>최근 가격(어제 종가)</th>
+                <th>개수 (조절가능)</th>
+                <th>최근 배당금</th>
+                <th>1년 예상 배당금</th>
+                <th>시가 배당률</th>
+                <th>현재 가치 (최근가격 * 개수)</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span id="status">데이터를 불러오는 중입니다.</span>
+        <span>수량은 각 브라우저에 영구 저장됩니다.</span>
+        <span>환율 데이터: <a href="https://www.exchangerate-api.com" target="_blank" rel="noreferrer">ExchangeRate-API</a></span>
+      </footer>
+    </div>
+
+    <script src="./app.js?v=3"></script>
+  </body>
+</html>
