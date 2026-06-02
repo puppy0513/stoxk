@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>stoxk login</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f6f3;
+        --panel: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --line: #d8ddd6;
+        --line-strong: #b7c0b5;
+        --accent: #0f766e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: linear-gradient(180deg, #f8faf7 0%, var(--bg) 100%);
+        color: var(--text);
+        font-family: "Inter", "Pretendard", "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        padding: 24px;
+      }
+
+      .shell {
+        min-height: calc(100vh - 48px);
+        display: grid;
+        place-items: center;
+      }
+
+      .card {
+        width: min(420px, 100%);
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 12px 0 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      form {
+        margin-top: 20px;
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      input {
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 12px 14px;
+        font: inherit;
+      }
+
+      button {
+        border: 1px solid var(--line-strong);
+        background: var(--accent);
+        color: #fff;
+        border-radius: 8px;
+        padding: 12px 14px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+
+      .error {
+        min-height: 20px;
+        color: #b91c1c;
+        font-size: 13px;
+      }
+
+      .hint {
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <p class="eyebrow">Protected dashboard</p>
+        <h1>비밀번호를 입력하세요</h1>
+        <p>올바른 비밀번호를 입력해야 대시보드와 저장 기능에 들어갈 수 있습니다.</p>
+
+        <form id="loginForm">
+          <label>
+            비밀번호
+            <input id="passwordInput" type="password" autocomplete="current-password" required />
+          </label>
+          <button id="submitButton" type="submit">입장</button>
+        </form>
+
+        <div id="error" class="error" aria-live="polite"></div>
+        <div class="hint">세션은 HttpOnly 쿠키로 보관됩니다.</div>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById("loginForm");
+      const passwordInput = document.getElementById("passwordInput");
+      const submitButton = document.getElementById("submitButton");
+      const errorEl = document.getElementById("error");
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get("next") || "/";
+
+      async function checkSession() {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        if (response.ok) {
+          window.location.href = next;
+        }
+      }
+
+      checkSession().catch(() => {});
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        errorEl.textContent = "";
+        submitButton.disabled = true;
+
+        try {
+          const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ password: passwordInput.value }),
+          });
+
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || "로그인에 실패했습니다.");
+          }
+
+          window.location.href = next;
+        } catch (error) {
+          errorEl.textContent = error instanceof Error ? error.message : "로그인에 실패했습니다.";
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
