@@ -1,41 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import calendar
-import csv
 import json
-from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from datetime import date
 from pathlib import Path
 
-from .config import DEFAULT_DB_PATH, WATCHLIST, asset_by_ticker
-from .sources import SourceError, YahooFinanceSource
-from .store import DividendStore
-
-
-def parse_date(value: str | None) -> date | None:
-    if value is None:
-        return None
-    return date.fromisoformat(value)
-
-
-def parse_amount(value: str) -> Decimal:
-    try:
-        return Decimal(value)
-    except InvalidOperation as exc:
-        raise argparse.ArgumentTypeError(f"Invalid amount: {value}") from exc
-
-
-def next_expected(last_ex_date: str | None, frequency: str) -> str:
-    if not last_ex_date:
-        return "-"
-    last = date.fromisoformat(last_ex_date)
-    if frequency == "weekly":
-        return (last + timedelta(days=7)).isoformat()
-    year = last.year + (1 if last.month == 12 else 0)
-    month = 1 if last.month == 12 else last.month + 1
-    day = min(last.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day).isoformat()
+from .config import WATCHLIST
+from .sources import DividendCrawler, DividendSnapshot
+from .supabase import SupabaseClient, SupabaseError
 
 
 def print_table(headers: list[str], rows: list[list[object]]) -> None:
@@ -53,231 +25,116 @@ def print_table(headers: list[str], rows: list[list[object]]) -> None:
         print(fmt(row))
 
 
-def open_store(args: argparse.Namespace) -> DividendStore:
-    store = DividendStore(args.db)
-    store.init()
-    return store
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    return date.fromisoformat(value)
 
 
-def command_list(args: argparse.Namespace) -> int:
-    store = open_store(args)
-    try:
-        rows = [
-            [
-                row["ticker"],
-                row["name"],
-                row["market"],
-                row["payment_frequency"],
-                row["currency"],
-                row["source_symbol"],
-            ]
-            for row in store.assets()
+def command_list(_: argparse.Namespace) -> int:
+    rows = [
+        [
+            asset.ticker,
+            asset.stock_name,
+            asset.market,
+            asset.payment_frequency,
+            asset.currency,
+            asset.source_symbol,
         ]
-        print_table(["Ticker", "Name", "Market", "Freq", "Currency", "Source"], rows)
-        return 0
-    finally:
-        store.close()
+        for asset in WATCHLIST
+    ]
+    print_table(["Ticker", "Stock name", "Market", "Freq", "Currency", "Source"], rows)
+    return 0
 
 
 def command_sync(args: argparse.Namespace) -> int:
-    store = open_store(args)
-    source = YahooFinanceSource()
-    failures: list[str] = []
-    total_inserted = 0
-    try:
-        for asset in WATCHLIST:
-            try:
-                events = source.fetch_dividends(asset, args.lookback_days)
-            except SourceError as exc:
-                failures.append(str(exc))
-                continue
-            inserted = store.add_events(events)
-            total_inserted += inserted
-            print(f"{asset.ticker}: fetched {len(events)}, new {inserted}")
+    crawler = DividendCrawler()
+    client = None
+    existing_rows: dict[str, dict[str, object]] = {}
 
-        print(f"Inserted {total_inserted} new dividend/distribution events.")
-        if failures:
-            print("\nFetch failures:")
-            for failure in failures:
-                print(f"- {failure}")
-            return 2
-        return 0
-    finally:
-        store.close()
+    if not args.dry_run:
+        client = SupabaseClient.from_env(require_write_key=True)
+        existing_rows = {row["ticker"]: row for row in client.fetch_dividend_snapshots()}
 
+    snapshots: list[DividendSnapshot] = []
+    warnings: list[str] = []
+    for asset in WATCHLIST:
+        try:
+            snapshot = crawler.fetch_latest(asset)
+        except Exception as exc:  # pragma: no cover - network issues are handled as warnings
+            warnings.append(f"{asset.ticker}: {exc}")
+            continue
 
-def command_add(args: argparse.Namespace) -> int:
-    asset = asset_by_ticker(args.ticker)
-    store = open_store(args)
-    try:
-        inserted = store.add_manual_event(
-            ticker=asset.ticker,
-            ex_date=args.ex_date,
-            amount=args.amount,
-            currency=args.currency or asset.currency,
-            payment_date=args.payment_date,
-            note=args.note,
-        )
-        print("Added manual event." if inserted else "Event already exists; nothing added.")
-        return 0
-    finally:
-        store.close()
+        if snapshot is None or snapshot.dividend is None:
+            warnings.append(f"{asset.ticker}: no dividend snapshot found")
+            continue
 
-
-def command_report(args: argparse.Namespace) -> int:
-    store = open_store(args)
-    try:
-        summary_rows = []
-        for row in store.latest_by_asset():
-            summary_rows.append(
-                [
-                    row["ticker"],
-                    row["market"],
-                    row["payment_frequency"],
-                    row["last_ex_date"] or "-",
-                    row["last_amount"] or "-",
-                    row["currency"],
-                    next_expected(row["last_ex_date"], row["payment_frequency"]),
-                    row["event_count"],
-                ]
+        previous = existing_rows.get(asset.ticker, {})
+        merged_payment_day = snapshot.payment_day or _parse_date(previous.get("payment_day"))
+        merged_ex_date = snapshot.ex_date or _parse_date(previous.get("ex_date"))
+        snapshots.append(
+            DividendSnapshot(
+                ticker=snapshot.ticker,
+                stock_name=snapshot.stock_name,
+                dividend=snapshot.dividend,
+                payment_day=merged_payment_day,
+                ex_date=merged_ex_date,
+                market=snapshot.market,
+                currency=snapshot.currency,
+                source=snapshot.source,
+                source_symbol=snapshot.source_symbol,
             )
-        print_table(
-            ["Ticker", "Market", "Freq", "Last ex-date", "Last amt", "CCY", "Expected next", "Events"],
-            summary_rows,
         )
 
-        recent = store.recent_dividends(args.limit)
-        if recent:
-            print("\nRecent events")
-            print_table(
-                ["Ticker", "Ex-date", "Pay-date", "Amount", "CCY", "Source"],
-                [
-                    [
-                        row["ticker"],
-                        row["ex_date"],
-                        row["payment_date"] or "-",
-                        row["amount"],
-                        row["currency"],
-                        row["source"],
-                    ]
-                    for row in recent
-                ],
-            )
-        return 0
-    finally:
-        store.close()
+    if args.dry_run:
+        print(json.dumps([snapshot.to_supabase_row() for snapshot in snapshots], ensure_ascii=False, indent=2))
+    else:
+        inserted = client.upsert_dividend_snapshots(snapshots) if client else 0
+        print(f"Upserted {inserted} dividend snapshot rows into Supabase.")
+
+    if warnings:
+        print("\nWarnings:")
+        for warning in warnings:
+            print(f"- {warning}")
+        return 2
+
+    return 0
 
 
-def command_export(args: argparse.Namespace) -> int:
-    store = open_store(args)
-    try:
-        rows = store.export_rows()
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with args.output.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(["ticker", "name", "market", "ex_date", "payment_date", "amount", "currency", "source", "note"])
-            for row in rows:
-                writer.writerow([row[column] for column in row.keys()])
-        print(f"Exported {len(rows)} rows to {args.output}")
-        return 0
-    finally:
-        store.close()
-
-
-def command_export_dashboard(args: argparse.Namespace) -> int:
-    store = open_store(args)
-    source = YahooFinanceSource()
-    try:
-        latest_rows = {row["ticker"]: row for row in store.latest_by_asset()}
-        ttm_totals = store.ttm_totals(date.today() - timedelta(days=365))
-        exported_at = date.today().isoformat()
-        rows: list[dict[str, object]] = []
-        failures: list[str] = []
-
-        for asset in WATCHLIST:
-            latest = latest_rows.get(asset.ticker)
-            recent_dividend = Decimal(latest["last_amount"]) if latest and latest["last_amount"] is not None else None
-            recent_dividend_date = latest["last_ex_date"] if latest else None
-            ttm_dividend = ttm_totals.get(asset.ticker, Decimal("0"))
-            try:
-                quote = source.fetch_previous_close(asset)
-                price = quote.price
-                price_date = quote.price_date.isoformat()
-            except SourceError as exc:
-                failures.append(str(exc))
-                price = None
-                price_date = None
-
-            rows.append(
-                {
-                    "ticker": asset.ticker,
-                    "name": asset.name,
-                    "market": asset.market,
-                    "paymentFrequency": asset.payment_frequency,
-                    "currency": asset.currency,
-                    "price": str(price) if price is not None else None,
-                    "priceDate": price_date,
-                    "recentDividend": str(recent_dividend) if recent_dividend is not None else None,
-                    "recentDividendDate": recent_dividend_date,
-                    "ttmDividend": str(ttm_dividend),
-                    "defaultQuantity": 1,
-                }
-            )
-
-        payload = {
-            "exportedAt": exported_at,
-            "asOf": exported_at,
-            "rows": rows,
-            "source": "stoxk",
-            "warnings": failures,
-        }
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"Exported dashboard snapshot to {args.output}")
-        if failures:
-            print("Price lookup warnings:")
-            for failure in failures:
-                print(f"- {failure}")
-            return 2
-        return 0
-    finally:
-        store.close()
+def command_report(_: argparse.Namespace) -> int:
+    client = SupabaseClient.from_env(allow_anon=True)
+    rows = client.fetch_dividend_snapshots()
+    print_table(
+        ["Ticker", "Stock name", "Dividend", "Pay date", "Ex-date", "Market", "Updated"],
+        [
+            [
+                row["ticker"],
+                row["stock_name"],
+                row.get("dividend"),
+                row.get("payment_day") or "-",
+                row.get("ex_date") or "-",
+                row.get("market"),
+                row.get("updated_at"),
+            ]
+            for row in rows
+        ],
+    )
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Track dividend and ETF distribution events.")
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help=f"SQLite DB path. Default: {DEFAULT_DB_PATH}")
+    parser = argparse.ArgumentParser(description="Track dividend and distribution data in Supabase.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    list_parser = subparsers.add_parser("list", help="Show tracked assets.")
+    list_parser = subparsers.add_parser("list", help="Show the configured watchlist.")
     list_parser.set_defaults(func=command_list)
 
-    sync_parser = subparsers.add_parser("sync", help="Fetch dividend/distribution history from Yahoo Finance.")
-    sync_parser.add_argument("--lookback-days", type=int, default=370)
+    sync_parser = subparsers.add_parser("sync", help="Crawl dividends and upsert them into Supabase.")
+    sync_parser.add_argument("--dry-run", action="store_true", help="Print the payload instead of writing to Supabase.")
     sync_parser.set_defaults(func=command_sync)
 
-    add_parser = subparsers.add_parser("add", help="Add a manual dividend/distribution event.")
-    add_parser.add_argument("ticker", help="Tracked ticker, for example 441640 or QQQI.")
-    add_parser.add_argument("--ex-date", required=True, type=parse_date, help="Ex-dividend/distribution date, YYYY-MM-DD.")
-    add_parser.add_argument("--amount", required=True, type=parse_amount, help="Amount per share/unit.")
-    add_parser.add_argument("--payment-date", type=parse_date, help="Payment date, YYYY-MM-DD.")
-    add_parser.add_argument("--currency", help="Override currency. Defaults to the asset currency.")
-    add_parser.add_argument("--note", help="Optional memo.")
-    add_parser.set_defaults(func=command_add)
-
-    report_parser = subparsers.add_parser("report", help="Show summary and recent events.")
-    report_parser.add_argument("--limit", type=int, default=30)
+    report_parser = subparsers.add_parser("report", help="Read the current Supabase dividend snapshot.")
     report_parser.set_defaults(func=command_report)
-
-    export_parser = subparsers.add_parser("export", help="Export all events to CSV.")
-    export_parser.add_argument("--output", type=Path, default=Path("dividends.csv"))
-    export_parser.set_defaults(func=command_export)
-
-    dashboard_export_parser = subparsers.add_parser(
-        "export-dashboard", help="Export a dashboard snapshot for the Vercel frontend."
-    )
-    dashboard_export_parser.add_argument("--output", type=Path, default=Path("data/holdings.json"))
-    dashboard_export_parser.set_defaults(func=command_export_dashboard)
 
     return parser
 
@@ -285,7 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    return args.func(args)
+    try:
+        return args.func(args)
+    except SupabaseError as exc:
+        parser.exit(2, f"{exc}\n")
 
 
 if __name__ == "__main__":
