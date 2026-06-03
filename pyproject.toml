@@ -1,7 +1,7 @@
 [project]
 name = "stoxk"
 version = "0.1.0"
-description = "Dividend and distribution tracker for selected US stocks and Korean ETFs."
+description = "Dividend and distribution crawler that syncs Supabase and Google Sheets."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
@@ -15,4 +15,3 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

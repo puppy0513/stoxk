@@ -1,8 +1,17 @@
 # stoxk
 
-배당금/분배금 추적용 CLI입니다. 아래 종목을 기본 watchlist로 관리합니다.
+배당금/분배금 자동 수집 파이프라인입니다.
 
-| Ticker | 종목 | 지급 주기 |
+흐름은 이렇게 갑니다.
+
+1. Python이 배당금과 지급일을 크롤링합니다.
+2. GitHub Actions가 매일 한 번 그 Python 스크립트를 실행합니다.
+3. 결과를 Supabase `dividend_snapshots` 테이블에 upsert 합니다.
+4. Google Apps Script가 Supabase를 읽어서 Google Sheets `Raw_data` 탭을 갱신합니다.
+
+## 추적 종목
+
+| Ticker | 종목 | 주기 |
 | --- | --- | --- |
 | QQQI | NEOS Nasdaq-100 High Income ETF | monthly |
 | O | Realty Income | monthly |
@@ -23,107 +32,88 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-## 사용법
+## 로컬 사용
 
-추적 종목 보기:
+watchlist 확인:
 
 ```bash
 stoxk list
 ```
 
-Yahoo Finance에서 최근 배당/분배 이벤트 동기화:
+Supabase에 최신 배당 스냅샷 업서트:
 
 ```bash
+export SUPABASE_URL="https://xxxx.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="..."
 stoxk sync
 ```
 
-요약 리포트:
+현재 Supabase 스냅샷 조회:
 
 ```bash
+export SUPABASE_URL="https://xxxx.supabase.co"
+export SUPABASE_ANON_KEY="..."
 stoxk report
 ```
 
-자동 조회가 안 되는 항목이나 실제 입금 확인 내역을 직접 추가:
+dry-run:
 
 ```bash
-stoxk add 441640 --ex-date 2026-05-28 --payment-date 2026-06-02 --amount 82 --note "증권사 입금 확인"
+stoxk sync --dry-run
 ```
 
-CSV 내보내기:
+## Supabase 테이블
 
-```bash
-stoxk export --output dividends.csv
-```
-
-이 저장소 루트에는 정적 대시보드가 들어 있습니다.
-
-- `index.html`
-- `styles.css`
-- `app.js`
-- `login.html`
-- `api/dashboard-data.js`
-- `api/cron/daily.js`
-
-Vercel에서는 루트 디렉터리를 이 저장소로 두고 그대로 배포하면 됩니다. 프론트는 기본적으로 `/api/dashboard-data`를 읽고, 이 엔드포인트는 Supabase의 `dashboard_snapshots` 테이블에 저장된 최신 스냅샷을 반환합니다. Cron이 없거나 최초 배포 직후에는 필요한 경우 서버가 직접 스냅샷을 만들어 저장합니다.
-표의 `개수`는 브라우저 `localStorage`에 영구 저장됩니다.
-
-Supabase에 `개수`를 저장하려면 Vercel 환경변수로 아래 두 개를 넣어주세요.
-
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-
-사이트 입장을 막으려면 아래도 넣어주세요.
-
-- `PASSWORD` 또는 `SITE_PASSWORD`
-- `SESSION_SECRET` - 선택사항입니다. 비워두면 비밀번호 값을 세션 서명 키로 같이 씁니다.
-- `CRON_SECRET` - Vercel Cron 전용 비밀값입니다. 크론 호출을 보호합니다.
-
-그리고 Supabase에 아래 테이블을 만들어주세요.
+`supabase/schema.sql`을 실행하세요.
 
 ```sql
-create table if not exists portfolio_quantities (
-  ticker text not null,
-  quantity numeric not null default 0,
+create table if not exists public.dividend_snapshots (
+  ticker text primary key,
+  stock_name text not null,
+  dividend numeric,
+  payment_day date,
+  ex_date date,
+  market text not null,
+  currency text not null,
+  source text not null,
+  source_symbol text not null,
   updated_at timestamptz not null default now()
 );
-
-create table if not exists dashboard_snapshots (
-  id text primary key,
-  payload jsonb not null,
-  updated_at timestamptz not null default now()
-);
 ```
 
-이 저장소의 `저장` 버튼은 `api/quantities.js`를 통해 위 테이블을 읽고 씁니다. 개인용 대시보드라면 이 구성이 가장 단순합니다.
+이 테이블은 GitHub Actions가 서비스 롤 키로 갱신합니다.  
+Apps Script는 anon key로 읽기만 합니다.
 
-중요한 점은, 이 방식은 `anon key`로 호출하므로 Supabase에서 `portfolio_quantities` 테이블에 대해 RLS를 끄거나, 익명 쓰기 정책을 따로 열어줘야 저장이 됩니다. 나중에 여러 사용자로 확장할 때는 auth와 `user_id` 컬럼을 추가하는 쪽이 더 안전합니다.
+## GitHub Actions
 
-사이트 접근은 `login.html`에서 비밀번호를 입력한 뒤, `HttpOnly` + `SameSite=Strict` 세션 쿠키로 유지됩니다. `middleware.js`가 페이지와 API를 함께 막기 때문에, 비밀번호를 모르면 대시보드와 저장 API에 직접 들어갈 수 없습니다.
+`.github/workflows/dividend-sync.yml`이 매일 UTC 00:00에 실행됩니다.  
+한국 시간으로는 오전 9시입니다.
 
-매일 1회 자동 갱신은 `vercel.json`의 Cron Job이 `/api/cron/daily`를 호출하면서 수행합니다. Vercel Cron은 UTC 기준이고, Hobby 플랜은 하루 1회만 가능합니다. 정확한 분 단위 시각 보장은 되지 않습니다.
+필수 Secrets:
 
-예:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
 
-```text
-https://your-app.vercel.app/?source=https://docs.google.com/spreadsheets/d/e/.../pub?output=csv
-```
+## Google Apps Script
 
-테스트 실행:
+`apps_script/Code.gs`를 Apps Script 프로젝트에 붙여 넣으세요.
 
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
-```
+스프레드시트 안에 `설정` 탭을 만들고 아래처럼 넣으세요.
 
-## 데이터 저장 위치
+| A열 | B열 |
+| --- | --- |
+| `SUPABASE_URL` | `https://xxxx.supabase.co` |
+| `SUPABASE_ANON_KEY` | `...` |
+| `SPREADSHEET_ID` | `1GoL5LDSzfsYwDo4VogfFsdTHBdEO5y-ZuRM3NXj8Kpo` |
+| `SHEET_NAME` | `Raw_data` |
 
-기본 SQLite DB는 `~/.stoxk/dividends.sqlite3`에 저장됩니다. 다른 파일을 쓰려면 모든 명령에 `--db`를 붙입니다.
+실행 함수:
 
-```bash
-stoxk --db ./dividends.sqlite3 report
-```
+- `syncRawDataFromSupabase()`
+- `installDailyTrigger()`
 
-## 참고
+## 주의
 
-`sync`는 Yahoo Finance의 배당 이벤트를 사용하므로 보통 `ex-date`와 금액을 저장합니다. 한국 ETF 또는 일부 커버드콜 ETF는 자동 소스가 비거나 늦을 수 있으니, 실제 공시/입금 내역은 `add` 명령으로 보완하는 방식이 안전합니다.
-
-프론트엔드 쪽은 별도 클라우드 데이터베이스가 없어도 돌아갑니다. 혼자 쓰는 대시보드라면 스프레드시트가 꽤 좋은 출발점이고, 여러 사람이 동시에 쓰거나 서버에서 수량까지 저장하려면 Supabase 같은 DB로 옮기는 편이 낫습니다.
+- StockAnalysis에서 가져올 수 있는 종목은 `배당금`과 `지급일`이 같이 들어갑니다.
+- 한국 종목처럼 지급일이 공개 소스에서 안 잡히는 경우 `payment_day`는 비어 있을 수 있습니다.
+- Apps Script는 `Raw_data` 탭의 열 `B`에서 티커를 찾고 열 `E`를 업데이트합니다.
