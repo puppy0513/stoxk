@@ -67,19 +67,6 @@ function syncRawDataFromSupabase() {
   };
 }
 
-function installDailyTrigger() {
-  ScriptApp.getProjectTriggers()
-    .filter((trigger) => trigger.getHandlerFunction() === "syncRawDataFromSupabase")
-    .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
-
-  ScriptApp.newTrigger("syncRawDataFromSupabase")
-    .timeBased()
-    .everyDays(1)
-    .atHour(9)
-    .nearMinute(5)
-    .create();
-}
-
 function fetchDividendSnapshots_(supabaseUrl, supabaseAnonKey) {
   const selectClause =
     'stock_name,ticker,dividend,payment_day,ex_date,market,currency,source,source_symbol,"Dividend Frequency",updated_at';

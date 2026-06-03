@@ -16,7 +16,6 @@
 ## 엔트리포인트
 
 - `syncRawDataFromSupabase()`
-- `installDailyTrigger()`
 
 ## 흐름
 
@@ -30,5 +29,5 @@ Supabase 컬럼명이 공백을 포함한 `"Dividend Frequency"`라면 Apps Scri
 ## 권장 설정
 
 - Apps Script의 시간대는 `Asia/Seoul`
-- `installDailyTrigger()`를 한 번 실행해서 매일 자동 실행 트리거를 만듭니다
+- Apps Script 편집기의 Triggers 메뉴에서 `syncRawDataFromSupabase()`를 매일 자동 실행하도록 시간 기반 트리거를 만듭니다
 - GitHub Action과 Apps Script는 5분 정도 간격을 두는 편이 안전합니다
