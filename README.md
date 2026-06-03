@@ -92,7 +92,7 @@ Apps Script는 anon key로 읽기만 합니다.
 필수 Secrets:
 
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `DIVIDEND_SECRET` - Supabase service role key를 여기에 넣습니다
 
 ## Google Apps Script
 
