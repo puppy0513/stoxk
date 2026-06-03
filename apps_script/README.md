@@ -23,6 +23,7 @@
 1. GitHub Actions가 매일 Supabase `dividend_snapshots` 테이블을 갱신합니다.
 2. Apps Script가 Supabase를 읽습니다.
 3. `Raw_data` 탭에서 컬럼 `B`의 티커를 찾아 컬럼 `E` 값을 업데이트합니다.
+4. 시트에 `Dividend Frequency` 또는 `배당주기` 헤더가 있으면 그 열도 함께 갱신합니다.
 
 ## 권장 설정
 
