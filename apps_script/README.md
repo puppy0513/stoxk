@@ -19,7 +19,7 @@
 
 ## 흐름
 
-1. GitHub Actions가 매일 Supabase `dividend_snapshots` 테이블을 갱신합니다.
+1. 외부 스케줄러가 GitHub Actions를 깨워 Supabase `dividend_snapshots` 테이블을 갱신합니다.
 2. Apps Script가 Supabase를 읽습니다.
 3. `Raw_data` 탭에서 컬럼 `B`의 티커를 찾아 컬럼 `A`에 종목명, 컬럼 `E`에 배당금을, 컬럼 `K`에 배당주기를 업데이트합니다.
 4. `K`열은 고정 사용합니다.
