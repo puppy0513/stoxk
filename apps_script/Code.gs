@@ -1,8 +1,9 @@
 const CONFIG = {
   sheetName: "Raw_data",
+  stockNameColumn: 1, // column A
   tickerColumn: 2, // column B
   dividendColumn: 5, // column E
-  frequencyColumnCandidates: ["Dividend Frequency", "배당주기"],
+  frequencyColumn: 11, // column K
   settingsSheetName: "설정",
 };
 
@@ -21,7 +22,6 @@ function syncRawDataFromSupabase() {
   if (!sheet) throw new Error(`Sheet not found: ${sheetName}`);
 
   const values = sheet.getDataRange().getValues();
-  const frequencyColumn = findHeaderColumn_(values, CONFIG.frequencyColumnCandidates);
   const updates = [];
 
   for (let rowIndex = 0; rowIndex < values.length; rowIndex += 1) {
@@ -33,16 +33,22 @@ function syncRawDataFromSupabase() {
     if (dividend === null || dividend === undefined || dividend === "") continue;
 
     const currentValue = values[rowIndex][CONFIG.dividendColumn - 1];
-    const frequencyValue = row.dividend_frequency || "";
-    const currentFrequencyValue =
-      frequencyColumn > 0 ? values[rowIndex][frequencyColumn - 1] : null;
+    const stockNameValue = row.stock_name || "";
+    const frequencyValue = row["Dividend Frequency"] || row.dividend_frequency || "";
+    const currentStockNameValue = values[rowIndex][CONFIG.stockNameColumn - 1];
+    const currentFrequencyValue = values[rowIndex][CONFIG.frequencyColumn - 1];
 
-    if (String(currentValue) === String(dividend) && String(currentFrequencyValue) === String(frequencyValue)) {
+    if (
+      String(currentValue) === String(dividend) &&
+      String(currentStockNameValue) === String(stockNameValue) &&
+      String(currentFrequencyValue) === String(frequencyValue)
+    ) {
       continue;
     }
 
     updates.push({
       row: rowIndex + 1,
+      stockName: stockNameValue,
       value: dividend,
       ticker: ticker,
       frequency: frequencyValue,
@@ -50,10 +56,9 @@ function syncRawDataFromSupabase() {
   }
 
   updates.forEach((update) => {
+    sheet.getRange(update.row, CONFIG.stockNameColumn).setValue(update.stockName);
     sheet.getRange(update.row, CONFIG.dividendColumn).setValue(update.value);
-    if (frequencyColumn > 0) {
-      sheet.getRange(update.row, frequencyColumn).setValue(update.frequency);
-    }
+    sheet.getRange(update.row, CONFIG.frequencyColumn).setValue(update.frequency);
   });
 
   return {
@@ -62,23 +67,15 @@ function syncRawDataFromSupabase() {
   };
 }
 
-function installDailyTrigger() {
-  ScriptApp.getProjectTriggers()
-    .filter((trigger) => trigger.getHandlerFunction() === "syncRawDataFromSupabase")
-    .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
-
-  ScriptApp.newTrigger("syncRawDataFromSupabase")
-    .timeBased()
-    .everyDays(1)
-    .atHour(9)
-    .nearMinute(5)
-    .create();
-}
-
 function fetchDividendSnapshots_(supabaseUrl, supabaseAnonKey) {
+  const selectClause =
+    'stock_name,ticker,dividend,payment_day,ex_date,market,currency,source,source_symbol,"Dividend Frequency",updated_at';
   const url =
     supabaseUrl +
-    "/rest/v1/dividend_snapshots?select=stock_name,ticker,dividend,payment_day,ex_date,market,currency,source,source_symbol,dividend_frequency,updated_at&order=ticker";
+    '/rest/v1/dividend_snapshots?select=' +
+    encodeURIComponent(selectClause) +
+    '&order=' +
+    encodeURIComponent('ticker');
   const response = UrlFetchApp.fetch(url, {
     method: "get",
     muteHttpExceptions: true,
@@ -102,21 +99,6 @@ function fetchDividendSnapshots_(supabaseUrl, supabaseAnonKey) {
 
 function normalizeTicker_(value) {
   return String(value || "").trim().toUpperCase();
-}
-
-function findHeaderColumn_(values, candidates) {
-  const limitRows = Math.min(values.length, 10);
-  for (let rowIndex = 0; rowIndex < limitRows; rowIndex += 1) {
-    const row = values[rowIndex] || [];
-    const limitCols = Math.min(row.length, 20);
-    for (let colIndex = 0; colIndex < limitCols; colIndex += 1) {
-      const cell = String(row[colIndex] || "").trim();
-      if (candidates.includes(cell)) {
-        return colIndex + 1;
-      }
-    }
-  }
-  return 0;
 }
 
 function readSettings_() {

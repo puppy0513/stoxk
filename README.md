@@ -5,7 +5,7 @@
 흐름은 이렇게 갑니다.
 
 1. Python이 배당금과 지급일을 크롤링합니다.
-2. GitHub Actions가 매일 한 번 그 Python 스크립트를 실행합니다.
+2. 외부 스케줄러가 GitHub Actions를 호출하면 Python 스크립트가 실행됩니다.
 3. 결과를 Supabase `dividend_snapshots` 테이블에 upsert 합니다.
 4. Google Apps Script가 Supabase를 읽어서 Google Sheets `Raw_data` 탭을 갱신합니다.
 
@@ -86,13 +86,13 @@ Apps Script는 anon key로 읽기만 합니다.
 
 ## GitHub Actions
 
-`.github/workflows/dividend-sync.yml`이 매일 UTC 00:00에 실행됩니다.  
-한국 시간으로는 오전 9시입니다.
+`.github/workflows/dividend-sync.yml`은 `workflow_dispatch` 또는 `repository_dispatch`로 실행됩니다.
+외부 스케줄러가 GitHub API를 호출해 정시에 깨우는 방식으로 쓰면 됩니다.
 
 필수 Secrets:
 
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `DIVIDEND_SECRET` - Supabase service role key를 여기에 넣습니다
 
 ## Google Apps Script
 
@@ -110,10 +110,10 @@ Apps Script는 anon key로 읽기만 합니다.
 실행 함수:
 
 - `syncRawDataFromSupabase()`
-- `installDailyTrigger()`
 
 ## 주의
 
 - StockAnalysis에서 가져올 수 있는 종목은 `배당금`과 `지급일`이 같이 들어갑니다.
 - 한국 종목처럼 지급일이 공개 소스에서 안 잡히는 경우 `payment_day`는 비어 있을 수 있습니다.
 - Apps Script는 `Raw_data` 탭의 열 `B`에서 티커를 찾고 열 `E`를 업데이트합니다.
+- Apps Script의 `Triggers` 메뉴에서 `syncRawDataFromSupabase()`를 시간 기반으로 등록하면 됩니다.

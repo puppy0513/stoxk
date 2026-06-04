@@ -2,8 +2,8 @@ name: Dividend sync
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 0 * * *"
+  repository_dispatch:
+    types: [dividend_sync]
 
 jobs:
   sync:
